@@ -6,7 +6,7 @@ time of the fit, we used the six non-negative independent components (ICs) compr
 of simple stellar populations (Bruzual & Charlot 2003) by Lu et al. 2006. We also took into account the 
 potential dust attenuation effects by the host galaxy and the broadening of the stellar template caused 
 by the stellar velocity dispersion.
-
+By (Yibo Wang) wybustc@mail.ustc.edu.cn and (Tinggui Wang) twang@ustc.edu.cn 
 # Acknowledgment
 We are glad you use our code! If you use our code, please cite this code and the following papers: 
 * [Bruzual & Charlot 2003](https://ui.adsabs.harvard.edu/abs/2003MNRAS.344.1000B/abstract) for BC03 simple stellar populations
@@ -17,7 +17,25 @@ We are glad you use our code! If you use our code, please cite this code and the
    
 
 # Installation 
+Requirements: Python3,and some neccessary packages including numpy, astropy, scipy, extinction, sfdmap, spectres, matplotlib, all installable with pip 
+```
+git clone https://github.com/wybustc/twfit
+```
 
-
-By (Tinggui Wang) twang@ustc.edu.cn and (Yibo Wang) wybustc@mail.ustc.edu.cn 
+# How to run 
+First, you need to set the two global used in the twfit.py as follow: 
+```
+PATH_ic=/path/to/17_ic.fit
+PATH_dustmap=/path/to/your/dustmap
+```
+Then, you can run the code as follow
+```
+from twfit import sdssfit
+sdssfit(path/to/your/sdss/spectrum/file) #fitting a spectrum from SDSS
+```
+or
+```
+from twfit import spec_fit
+spec_fit(wave,flux,ivar, ra_dec=(ra,dec), redshift=redshift) #fitting an arbitraray spectrum 
+```
 
