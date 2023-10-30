@@ -12,17 +12,15 @@ import matplotlib.pyplot as plt
 from create_fits import create_fits 
 from spectres import spectres 
 import os 
-import mpfit as mpfit
 
 
 
 PATH_IC=r"C:\Users\32924\Desktop\twfit\17_ic.fit" # the path to the stellar templates, change to your own path before running the procedure 
 PATH_dustmap=r"D:\sfddata-master"  #the path to the SFD dust map data 
-#raise Exception('Please correct the PATH_IC and PATH_dustmap to your own ones, and then mask this line')
+raise Exception('Please correct the PATH_IC and PATH_dustmap to your own ones, and then mask this line')
 def sdssfit(path_sdss,starlight=None,
 					  and_mask=True,extra_mask=None,line_mask=True,bw=1200/3e5,
 					  poly_correct=True,poly_deg=3,
-					  fit_BB=False,fit_POW=False,
 					  varyTorIndex=False,add_pow=True, add_BB=False,add_FeII=False,
 					  BB_temp=10000, BB_temps=num.arange(5000,50000,1000),powlaw_index=2, powlaw_indexs=num.arange(-2,4,0.5),
 					  path_savefile=None,path_savefig=None,show=True,save_fmt='default'):
@@ -35,8 +33,6 @@ def sdssfit(path_sdss,starlight=None,
 	#bw,         the width used to mask the emission lines 
 	#poly_correct, correct the final fitting with a low-order polynoimal to get a better  results 
 	#poly_deg,   the deg of polynominal used to do the poly-correction 
-	#fit_BB,     if True, we fit the continuum with  only a Blackbody component 
-	#fit_POW,    if True, we fit the continuum with  only a polwer-law component 
 	#add_pow,    if True, we include a pow-law component in the fitting 
 	#add_BB,     if True, we include a blackbody component in the fitting 
 	#varyTorIndex, if True, we travel the range indicated by the parameters BB_temps or powlaw_index,to find the best 
@@ -103,12 +99,6 @@ def sdssfit(path_sdss,starlight=None,
 			print('varyIndex-chi2min', powlaw_index, chi2min[ind_chi2])
 
 	tf=twfit(wave,flux,ivar,starlight_temp=starlight, mask=mask,path_savefile=path_savefile,path_savefig=path_savefig,show=show,path_ic=PATH_IC,mw_ebv=mw_ebv,redshift=redshift)
-	if fit_BB:
-		tf.fit_BB() # fit  the continuum with only blackbody component 
-		return ':)' 
-	if fit_POW:
-		wave,flux,yf=tf.fit_pow() # fit the continuum with only powlaw component 
-		return wave,flux,yf
 	tf.running(save_fmt=save_fmt,powlaw_index=powlaw_index, BB_temp=BB_temp, line_mask=line_mask,polycorr=poly_correct,polycorr_deg=poly_deg,powlaw=add_pow,bw=bw,add_FeII=add_FeII,add_BB=add_BB)
 
 	print('Best ired: %s'%tf.ired_best)
@@ -122,7 +112,7 @@ def sdssfit(path_sdss,starlight=None,
 def spec_fit(wave,flux,ivar,starlight=None,mw_ebv=None,ra_dec=None,redshift=0, 
 							extra_mask=None,line_mask=True,bw=1200/3e5,
 							poly_correct=True,poly_deg=3,
-							fit_BB=False,fit_POW=False,log_rebin=True,
+							log_rebin=True,
 							varyTorIndex=False,add_BB=False,add_pow=True,add_FeII=False,	
 							BB_temp=10000, BB_temps=num.arange(5000,50000,1000),powlaw_index=2, powlaw_indexs=num.arange(-2,4,0.5),  
 							path_savefile=None,path_savefig=None,show=True, save_fmt='default',):
@@ -182,12 +172,6 @@ def spec_fit(wave,flux,ivar,starlight=None,mw_ebv=None,ra_dec=None,redshift=0,
 			print('varyIndex-chi2min', powlaw_index, chi2min[ind_chi2])
 
 	tf=twfit(wave,flux,ivar,starlight_temp=starlight, mask=mask,path_savefile=path_savefile,path_savefig=path_savefig,show=show,path_ic=PATH_IC,mw_ebv=mw_ebv,redshift=redshift)
-	if fit_BB:
-		tf.fit_BB() # fit  the continuum with only blackbody component 
-		return ':)' 
-	if fit_POW:
-		wave,flux,yf=tf.fit_pow() # fit the continuum with only powlaw component 
-		return wave,flux,yf
 	tf.running(save_fmt=save_fmt,powlaw_index=powlaw_index, BB_temp=BB_temp, line_mask=line_mask,polycorr=poly_correct,polycorr_deg=poly_deg,powlaw=add_pow,bw=bw,add_FeII=add_FeII,add_BB=add_BB)
 
 
@@ -396,32 +380,13 @@ class twfit():
 		if save_fmt=='default':
 			params={0:{'redshift':self.redshift,'ired':self.ired_best,'sigma':self.best_sigma,'chi2':self.chi2},1:None,2:None}
 			datas={0:None,1:{'wave':{'data':num.e**self.wic,'fmt':'D','unit':'none'},\
-							'spec':{'data':self.msp,'fmt':'D','unit':'none'},\
-							'starlight':{'data':self.fsl,'fmt':'D','unit':'none'},\
-							'powlaw':{'data':self.fp,'fmt':'D','unit':'none'},\
-							'mask':{'data':self.mask_int,'fmt':'bool','unit':'none'},\
-							'flux':{'data':self.f_int,'fmt':'D','unit':'none'},\
-							'ivar':{'data':self.ivar_int,'fmt': 'D','unit':'none'}},\
-						 2: {'ic_weights':{'data':self.ic_weights, 'fmt':'D', 'unit':'none'}} } 
-		elif save_fmt=='dbsp':
-			params={0:{'redshift':self.redshift},1:None}
-			datas={0:None,1:{'wave_dbsp':{'data':num.e**self.wic,'fmt':'D','unit':'Angstrom'},\
-						'flux_dbsp':{'data':self.f_int,'fmt':'D','unit':'none'},\
-						'err_dbsp':{'data':self.ivar_int**-0.5,'fmt':'D','unit':'none'},\
-						'continuum':{'data':self.msp,'fmt':'D','unit':'none'},\
-						'conti_err':{'data':num.zeros_like(self.msp),'fmt':'D','unit':'none'},\
-						'stellar':{'data':self.fsl,'fmt':'D','unit':'none'},\
-						'stellar_err':{'data':num.zeros_like(self.fsl),'fmt':'D','unit':'none'}}} # we didn't save the information of line mask, since it has different array length 
-		elif save_fmt=='ppxf':
-		#	print('redshift',self.redshift)
-		#	a=input()
-			params={0:{'redshift':self.redshift,'ebv':self.mw_ebv},1:None}
-			datas={0:None,1:{'wave':{'data':num.e**self.wic,'fmt':'D','unit':'Angstrom'},\
-							'original_data':{'data':self.f_int,'fmt':'D','unit':'none'},\
-							'stellar':{'data':self.fsl,'fmt':'D','unit':'none'},\
-							'spec_fit':{'data':self.msp,'fmt':'D','unit':'none'},\
-							'err_stellar':{'data':num.zeros_like(self.fsl),'fmt':'D','unit':'none'},\
-							'err_sdss':{'data':self.ivar_int**-0.5,'fmt':'D','unit':'none'}}}
+						 'spec':{'data':self.msp,'fmt':'D','unit':'none'},\
+						 'starlight':{'data':self.fsl,'fmt':'D','unit':'none'},\
+						 'powlaw':{'data':self.fp,'fmt':'D','unit':'none'},\
+						 'mask':{'data':self.mask_int,'fmt':'bool','unit':'none'},\
+						 'flux':{'data':self.f_int,'fmt':'D','unit':'none'},\
+						 'ivar':{'data':self.ivar_int,'fmt': 'D','unit':'none'}},\
+				      2: {'ic_weights':{'data':self.ic_weights, 'fmt':'D', 'unit':'none'}} } 
 		else:
 			raise Exception('No such savefile format %s'%save_fmt)
 		if not self.path_savefile==None:
@@ -453,12 +418,7 @@ class twfit():
 			else: plt.plot(num.e**self.wic,self.msp-self.fsl,label='powlaw-index=%s'%self.powlaw_index[0])
 		plt.scatter(num.e**self.wic[self.mask_int==0],self.f_int[self.mask_int==0],c='g',marker='+')
 		if self.add_FeII: plt.plot(num.e**self.wic,self.ffe,'brown',label='FeII')
-		# ylim=plt.ylim()
-		# top=1
-		# for lname, linew in zip(['Ha','Hb', 'HeII', 'NIII','OIII','OIII'],[6563,4861,4686,4640,5007,4959]):
-		# 	plt.plot([linew,linew],ylim,linestyle='--',alpha=0.8) 
-		# 	plt.text(linew-50,60-top*10,lname,fontsize=10) 
-		# 	top=abs(top-1)
+
 		plt.xlabel('Restframe wavelength',fontsize=20)
 		plt.ylabel('Flux ',fontsize=20)
 		plt.legend(fontsize=20)
@@ -491,51 +451,3 @@ class twfit():
 		if polycorr:
 			self.poly_correct(deg=polycorr_deg) # poly correct to improve the fitting results
 		self.save_results(save_fmt=save_fmt) # save the results
-	
-
-	def fit_BB(self):
-		h=6.62607015e-34; c=299792458.0
-		k=1.380649e-23 # International system of units 
-	#	print('Hello')
-		def residuals0(p,fjac=None, xval=num.e**self.wave[self.mask==1]*1e-10, yval=self.flux[self.mask==1], errval=(self.ivar[self.mask==1])**-0.5):
-			bb_lam= 2*h/xval**5 * 1/( num.e**(h*c/xval/k/p[1]) -1 )
-			bb_lam= num.array( bb_lam*1000 )*p[0] # 
-	#		print(bb_lam)
-			return [0,(yval - bb_lam)/errval]
-
-		par=[{'value':1   ,'limited':[1,0],'limits':[0,0],'parname':'scale'},
-			 {'value':15000,'limited':[1,0],'limits':[5000,0],'parname':'Temperature'}] 
-
-
-		res=mpfit.mpfit(residuals0, parinfo=par,quiet=False)
-		print(res.errmsg)
-
-		p=res.params
-		xval=num.arange(num.e**self.wave[0],num.e**self.wave[-1],0.1)*1e-10
-		bb_lam= 2*h/xval**5 * 1/( num.e**(h*c/xval/k/p[1]) -1 )
-		bb_lam= num.array( bb_lam*1000 )*p[0]
-
-		print(p)
-		plt.plot(num.e**self.wave,self.flux)
-		plt.plot(xval*1e10,bb_lam)
-		plt.scatter(num.e**self.wave[self.mask==0],self.flux[self.mask==0],c='g',marker='+')
-		plt.show()
-
-	def fit_pow(self):
-		def residuals0(p,fjac=None, xval=num.e**self.wave[self.mask==1], yval=self.flux[self.mask==1], errval=(self.ivar[self.mask==1])**-0.5):
-			yf= p[0]* (xval/1000)**-p[1]
-			return [0,(yval - yf)/errval]
-
-		par=[{'value':1   ,'limited':[1,0],'limits':[0,0],'parname':'scale'},
-			 {'value':4,'limited':[1,0],'limits':[0,0],'parname':'index'}] 
-		
-		res=mpfit.mpfit(residuals0, parinfo=par,quiet=False)
-		p=res.params 
-		xval=num.arange(num.e**self.wave[0],num.e**self.wave[-1],0.1)
-		yf= p[0]* (xval/1000)**-p[1] 
-
-		plt.plot(num.e**self.wave,self.flux)
-		plt.plot(xval,yf)
-		plt.scatter(num.e**self.wave[self.mask==0],self.flux[self.mask==0],c='g',marker='+')
-		plt.show()
-		return num.e**self.wave,self.flux, p[0]* (num.e**self.wave/1000)**-p[1]
