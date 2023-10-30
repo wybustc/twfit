@@ -7,6 +7,7 @@ of simple stellar populations (Bruzual & Charlot 2003) by Lu et al. 2006. We als
 potential dust attenuation effects by the host galaxy and the broadening of the stellar template caused 
 by the stellar velocity dispersion.
 By (Yibo Wang) wybustc@mail.ustc.edu.cn and (Tinggui Wang) twang@ustc.edu.cn 
+<img align="center" src="example.png">
 # Acknowledgment
 We are glad you use our code! If you use our code, please cite this code and the following papers: 
 * [Bruzual & Charlot 2003](https://ui.adsabs.harvard.edu/abs/2003MNRAS.344.1000B/abstract) for BC03 simple stellar populations
