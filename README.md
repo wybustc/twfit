@@ -24,7 +24,7 @@ git clone https://github.com/wybustc/twfit
 ```
 
 # How to run 
-First, you need to set the two global used in the twfit.py as follow: 
+First, you need to set the two global variables used in the twfit.py as follow: 
 ```
 PATH_ic=/path/to/17_ic.fit
 PATH_dustmap=/path/to/your/dustmap
