@@ -1,29 +1,40 @@
 from astropy.io import fits 
 import numpy as num 
+#from PyAstronomy import pyasl
 from extinction import calzetti00,apply,remove,fitzpatrick99# 
 from vdisp_gconv_original import vdisp_gconv
 from line_info3 import line_info3
-import sfdmap 
+from sfdmap import ebv as ebv_value
 from reject_bad import reject_bad
 from scipy.interpolate import interp1d
 from scipy.optimize import nnls
 import math 
 import matplotlib.pyplot as plt 
-from create_fits import create_fits 
+from library import create_fits,MonteC,set_axis
 from spectres import spectres 
+from library import findpeak
 import os 
+import mpfit as mpfit
 
 
 
-PATH_IC=r"C:\Users\32924\Desktop\twfit\17_ic.fit" # the path to the stellar templates, change to your own path before running the procedure 
-PATH_dustmap=r"D:\sfddata-master"  #the path to the SFD dust map data 
-raise Exception('Please correct the PATH_IC and PATH_dustmap to your own ones, and then mask this line')
+PATH_IC=r"C:\Users\32924\Desktop\twfit\17_ic.fit" # the path to the templates, change to your own path before running the procedure 
+#NOTE NOTE maybe we can make iteration available, and we fit first and mask points deviated 3 sigma and then fit again.
+#NOTE the default Rv for calzetti extinction law?
+#NOTE 拟合是否需要考虑vaccum波长和air波长的转换？ 
+#NOTE 目前nnls求解的时候，没有把误差作为权重？ 是没有的，
+#     首先可以验证下，给nnls(A,b)是Solve argmin_x || Ax - b ||_2 for x>=0.， 那么是否可以通过 nnls(A*1/err,b*1/err)把误差给加进去？
+#     我们或许可以考虑一个折中的方法，即，nnls计算出最优解后，然后自己计算相应参数下的chi2,从而判断ired, sigma等最优参数
+#     更好的或许还是用mpfit来拟合？先用nnls得到一个初始解
+#NOTE 是否可以给红移或波长加个shift? 
+#TODO add a sentence to check if the input is ivar? sometimes maybe an error was inputed 
 def sdssfit(path_sdss,starlight=None,
 					  and_mask=True,extra_mask=None,line_mask=True,bw=1200/3e5,
 					  poly_correct=True,poly_deg=3,
 					  varyTorIndex=False,add_pow=True, add_BB=False,add_FeII=False,
 					  BB_temp=10000, BB_temps=num.arange(5000,50000,1000),powlaw_index=2, powlaw_indexs=num.arange(-2,4,0.5),
 					  path_savefile=None,path_savefig=None,show=True,save_fmt='default'):
+	#fitting for sdss spectrum 
 	#fitting for sdss spectrum 
 	#The Input parameters: 
 	#starlight,  provide your own stellar template using the format {'wave':wave, 'flux': flux} 
@@ -33,6 +44,8 @@ def sdssfit(path_sdss,starlight=None,
 	#bw,         the width used to mask the emission lines 
 	#poly_correct, correct the final fitting with a low-order polynoimal to get a better  results 
 	#poly_deg,   the deg of polynominal used to do the poly-correction 
+	#fit_BB,     if True, we fit the continuum with  only a Blackbody component 
+	#fit_POW,    if True, we fit the continuum with  only a polwer-law component 
 	#add_pow,    if True, we include a pow-law component in the fitting 
 	#add_BB,     if True, we include a blackbody component in the fitting 
 	#varyTorIndex, if True, we travel the range indicated by the parameters BB_temps or powlaw_index,to find the best 
@@ -40,27 +53,27 @@ def sdssfit(path_sdss,starlight=None,
 	#              if False,we fixed the temperature of the blacbody included (or pow-law index) as the value given 
 	#              by the parameter BB_temp (or powlaw_index) 
 	#path_savefile, if it's not None, we will save the results at this path 
-	#path_savefig,  the path used to save the figure 
+	#path_savefig, the path used to save the figure 
 	#show, if True, we will display the fitting results in an image 
-	# 
 
 
-	#read the spectrum and do the redshift correction 
+	#read the spectrum 
 	hdu=fits.open(path_sdss)
-	wave   =hdu[1].data['loglam']*num.log(10)-num.log(1+hdu[2].data['Z'][0])
-	flux   =hdu[1].data['flux']*(1+hdu[2].data['Z'][0])
-	ivar   =hdu[1].data['ivar']/(1+hdu[2].data['Z'][0])**2
-	loglam =hdu[1].data['loglam']
+	wave    =hdu[1].data['loglam']*num.log(10)-num.log(1+hdu[2].data['Z'][0]) #RestFrame ln wavelength 
+#	wave_gap=wave[1]-wave[0] # if we mask some points, the we must calculate before the mask, since we can mask some points, and make the gap large 
+	flux    =hdu[1].data['flux']*(1+hdu[2].data['Z'][0])
+	ivar    =hdu[1].data['ivar']/(1+hdu[2].data['Z'][0])**2
+	loglam  =hdu[1].data['loglam']
 	sdss_and_mask=hdu[1].data['and_mask']
 	redshift=hdu[2].data['Z'][0]
-	
+
 	ind= (ivar==0) | num.isnan(flux) | num.isinf(flux) | num.isnan(ivar) | (num.isinf(ivar))
 	mask=num.ones_like(wave,dtype=int)
-	mask[ind]==0 #mask the nan value, otherwise it may raise exceptions 
+	mask[ind]==0
 
 	# Galactic extinction correction 
 	ra,dec=hdu[0].header['plug_ra'],hdu[0].header['plug_dec']
-	mw_ebv=sfdmap.ebv((ra,dec),unit='degree',mapdir=PATH_dustmap)
+	mw_ebv=ebv_value((ra,dec),unit='degree')
 	fcorr=remove(fitzpatrick99(num.array(10**loglam,dtype='float64'),3.1*mw_ebv), num.ones_like(flux)) #loglam, the lg10 value of the observed wavelength 
 	flux=flux*fcorr
 	ivar=ivar/fcorr**2 
@@ -109,27 +122,22 @@ def sdssfit(path_sdss,starlight=None,
 
 	return num.e**tf.wic,tf.f_int,tf.msp,tf.ivar_int 
 	
-def spec_fit(wave,flux,ivar,starlight=None,mw_ebv=None,ra_dec=None,redshift=0, 
+def spec_fit(wave,flux,ivar,starlight=None,mw_ebv=None,mw_ext=True,ra_dec=None,redshift=0,
 							extra_mask=None,line_mask=True,bw=1200/3e5,
 							poly_correct=True,poly_deg=3,
-							log_rebin=True,
-							varyTorIndex=False,add_BB=False,add_pow=True,add_FeII=False,	
-							BB_temp=10000, BB_temps=num.arange(5000,50000,1000),powlaw_index=2, powlaw_indexs=num.arange(-2,4,0.5),  
-							path_savefile=None,path_savefig=None,show=True, save_fmt='default',):
+							log_rebin=True,fit_BB=False,fit_POW=False,
+							varyTorIndex=False,add_pow=True,add_BB=False,add_FeII=False,
+							BB_temp=10000, BB_temps=num.arange(5000,50000,1000),powlaw_index=2, powlaw_indexs=num.arange(-2,4,0.5), 
+							path_savefile=None,path_savefig=None,show=True,save_fmt='default',):
 	#fitting for spectra 
-	#wave, the observed wavelength of the target 
-	#flux, the obserced flux 
-	#ivar, 1/err**2,in which  err is the 1-sigma error of the flux measurements 
-	#ra_dec=(ra,dec), in unit 'deg', which  can be used to get the galactic extinction ebv from dust map
-	#                 if mw_ebv was supplied, then  it can be None 
-	#log_rebin, if True, we will resample the input spectra to a log-uniformed  wavelength grid 
-	#           it is neccessary for those with the spectra wavelength grid not uniformed in log-space 
-	if (mw_ebv is None ) and (ra_dec is None): 
+	#ra_dec=(ra,dec), in unit 'deg'
+	if (mw_ebv is None ) & (ra_dec is None) & mw_ext: 
 		raise Exception('Must give one of the mw_ebv or ra_dec to do the Galactic extinction ')
-	if mw_ebv is None: mw_ebv= sfdmap.ebv(ra_dec,unit='degree',mapdir=PATH_dustmap)
-	fcorr=remove(fitzpatrick99(wave,3.1*mw_ebv), num.ones_like(flux))
-	flux=flux*fcorr
-	ivar=ivar/fcorr**2 
+	if mw_ext:
+		if mw_ebv is None: mw_ebv= ebv_value(ra_dec,unit='degree')
+		fcorr=remove(fitzpatrick99(wave,3.1*mw_ebv), num.ones_like(flux))
+		flux=flux*fcorr
+		ivar=ivar/fcorr**2 
 	
 	wave=wave/(1+redshift);flux=flux*(1+redshift); ivar=ivar/(1+redshift)**2 #NOTE ferr redshift? 
 	
@@ -138,6 +146,9 @@ def spec_fit(wave,flux,ivar,starlight=None,mw_ebv=None,ra_dec=None,redshift=0,
 		flux_log,err_log=spectres(num.e**wave_log,wave,flux,spec_errs=ivar**-0.5)
 		wave,flux,ivar=wave_log,flux_log,1/err_log**2
 		#wave_gap=wave[1]-wave[0]
+	else: 
+		wave=num.log(wave)
+		# plt.plot(wave,flux) ;plt.show()
 	
 	if extra_mask is not None:
 		mask=num.ones_like(wave,dtype=int)
@@ -146,8 +157,9 @@ def spec_fit(wave,flux,ivar,starlight=None,mw_ebv=None,ra_dec=None,redshift=0,
 			mask[ind_mask]=0
 	else:
 		mask=num.ones_like(flux,dtype=int)
+	#ind=num.isnan(ivar) | num.isinf(ivar) | num.isnan(flux) | num.isinf(flux)
  
-	if varyTorIndex & (add_BB | add_pow): 
+	if varyTorIndex: 
 		if add_BB==True:
 			chi2min=[]  
 			for BB_temp in BB_temps: 
@@ -155,7 +167,7 @@ def spec_fit(wave,flux,ivar,starlight=None,mw_ebv=None,ra_dec=None,redshift=0,
 				tf.running(save_fmt=save_fmt,BB_temp=BB_temp, line_mask=line_mask,polycorr=poly_correct,polycorr_deg=poly_deg,powlaw=add_pow,bw=bw,add_FeII=add_FeII,add_BB=add_BB)
 				chi2min.append(tf.chi2) 
 			for BB_temp,tf_chi2 in zip(BB_temps, chi2min):
-					print('Finding Best Temperature', BB_temp, tf_chi2) 
+					print(BB_temp, tf_chi2) 
 			ind_chi2=num.argmin(chi2min)
 			BB_temp=BB_temps[ind_chi2]  
 			print('varyTemp-chi2min', BB_temp,  chi2min[ind_chi2]) 
@@ -166,15 +178,21 @@ def spec_fit(wave,flux,ivar,starlight=None,mw_ebv=None,ra_dec=None,redshift=0,
 				tf.running(save_fmt=save_fmt,powlaw_index=powlaw_index, line_mask=line_mask,polycorr=poly_correct,polycorr_deg=poly_deg,powlaw=add_pow,bw=bw,add_FeII=add_FeII,add_BB=add_BB)
 				chi2min.append(tf.chi2)   
 			for powlaw_index,tf_chi2 in zip(powlaw_indexs, chi2min):
-				print('Finding Best Powlaw Index', powlaw_index, tf_chi2)
+				print(powlaw_index, tf_chi2)
 			ind_chi2=num.argmin(chi2min) 
 			powlaw_index=powlaw_indexs[ind_chi2]  
 			print('varyIndex-chi2min', powlaw_index, chi2min[ind_chi2])
 
 	tf=twfit(wave,flux,ivar,starlight_temp=starlight, mask=mask,path_savefile=path_savefile,path_savefig=path_savefig,show=show,path_ic=PATH_IC,mw_ebv=mw_ebv,redshift=redshift)
+	if fit_BB:
+		wave,flux,yf,ferr,p_BB= tf.fit_BB() # fit  the continuum with only blackbody component 
+		# plt.plot(wave,flux, wave,yf)
+		# plt.show()
+		return wave, flux, yf, ferr, p_BB
+	if fit_POW:
+		wave,flux,yf,ferr,p_pow=tf.fit_pow(poly_corr=poly_correct) # fit the continuum with only powlaw component 
+		return wave,flux,yf,ferr, p_pow
 	tf.running(save_fmt=save_fmt,powlaw_index=powlaw_index, BB_temp=BB_temp, line_mask=line_mask,polycorr=poly_correct,polycorr_deg=poly_deg,powlaw=add_pow,bw=bw,add_FeII=add_FeII,add_BB=add_BB)
-
-
 	print('Best ired: %s'%tf.ired_best)
 	print('Best sigma: %s'%tf.best_sigma)
 	print('Min reduced-chi2: %s'%tf.chi2) 
@@ -380,13 +398,32 @@ class twfit():
 		if save_fmt=='default':
 			params={0:{'redshift':self.redshift,'ired':self.ired_best,'sigma':self.best_sigma,'chi2':self.chi2},1:None,2:None}
 			datas={0:None,1:{'wave':{'data':num.e**self.wic,'fmt':'D','unit':'none'},\
-						 'spec':{'data':self.msp,'fmt':'D','unit':'none'},\
-						 'starlight':{'data':self.fsl,'fmt':'D','unit':'none'},\
-						 'powlaw':{'data':self.fp,'fmt':'D','unit':'none'},\
-						 'mask':{'data':self.mask_int,'fmt':'bool','unit':'none'},\
-						 'flux':{'data':self.f_int,'fmt':'D','unit':'none'},\
-						 'ivar':{'data':self.ivar_int,'fmt': 'D','unit':'none'}},\
-				      2: {'ic_weights':{'data':self.ic_weights, 'fmt':'D', 'unit':'none'}} } 
+							'spec':{'data':self.msp,'fmt':'D','unit':'none'},\
+							'starlight':{'data':self.fsl,'fmt':'D','unit':'none'},\
+							'powlaw':{'data':self.fp,'fmt':'D','unit':'none'},\
+							'mask':{'data':self.mask_int,'fmt':'bool','unit':'none'},\
+							'flux':{'data':self.f_int,'fmt':'D','unit':'none'},\
+							'ivar':{'data':self.ivar_int,'fmt': 'D','unit':'none'}},\
+						 2: {'ic_weights':{'data':self.ic_weights, 'fmt':'D', 'unit':'none'}} } 
+		elif save_fmt=='dbsp':
+			params={0:{'redshift':self.redshift},1:None}
+			datas={0:None,1:{'wave_dbsp':{'data':num.e**self.wic,'fmt':'D','unit':'Angstrom'},\
+						'flux_dbsp':{'data':self.f_int,'fmt':'D','unit':'none'},\
+						'err_dbsp':{'data':self.ivar_int**-0.5,'fmt':'D','unit':'none'},\
+						'continuum':{'data':self.msp,'fmt':'D','unit':'none'},\
+						'conti_err':{'data':num.zeros_like(self.msp),'fmt':'D','unit':'none'},\
+						'stellar':{'data':self.fsl,'fmt':'D','unit':'none'},\
+						'stellar_err':{'data':num.zeros_like(self.fsl),'fmt':'D','unit':'none'}}} # we didn't save the information of line mask, since it has different array length 
+		elif save_fmt=='ppxf':
+		#	print('redshift',self.redshift)
+		#	a=input()
+			params={0:{'redshift':self.redshift,'ebv':self.mw_ebv},1:None}
+			datas={0:None,1:{'wave':{'data':num.e**self.wic,'fmt':'D','unit':'Angstrom'},\
+							'original_data':{'data':self.f_int,'fmt':'D','unit':'none'},\
+							'stellar':{'data':self.fsl,'fmt':'D','unit':'none'},\
+							'spec_fit':{'data':self.msp,'fmt':'D','unit':'none'},\
+							'err_stellar':{'data':num.zeros_like(self.fsl),'fmt':'D','unit':'none'},\
+							'err_sdss':{'data':self.ivar_int**-0.5,'fmt':'D','unit':'none'}}}
 		else:
 			raise Exception('No such savefile format %s'%save_fmt)
 		if not self.path_savefile==None:
@@ -395,30 +432,28 @@ class twfit():
 
 		fig=plt.figure(figsize=(15,8))
 		ax=plt.axes()
-		ax.tick_params(labelsize=20)
-		ax.tick_params(which='both',direction='in')
-		ax.tick_params(which='major',length=7)
-		ax.tick_params(which='major',width=1.3) 
-		ax.tick_params(which='minor',length=3) 
-		ax.tick_params(which='minor',width=1.3) 
-		linewidth=1.5
-		ax.spines['bottom'].set_linewidth(linewidth);ax.spines['left'].set_linewidth(linewidth) ;ax.spines['right'].set_linewidth(linewidth); ax.spines['top'].set_linewidth(linewidth)
-
+		set_axis(ax,labelsize=20,linewidth=1.5,direction='in', major_length=7,minor_length=3,major_width=1.3, minor_width=1.3)
 		plt.plot(num.e**self.wic,self.f_int)
-#		print(len(self.wic[self.mask_int==0]))
+	#	print(len(self.wic[self.mask_int==0]))
 		plt.plot(num.e**self.wic,self.msp,'r',label='bestfit')
 		plt.plot(num.e**self.wic,self.fsl,'pink',label='starlight')
 		plt.plot(num.e**self.wic,self.f_int-self.msp,'y',label='lineSpec')
 		if self.BB:
-			if self.add_FeII:plt.plot(num.e**self.wic,self.msp-self.fsl-self.ffe,label='blackbody-%sK'%self.BB_temp[0])
-			else: plt.plot(num.e**self.wic,self.msp-self.fsl,label='blackbody-%sK'%self.BB_temp[0])
-
+			plt.plot(num.e**self.wic,self.msp-self.fsl,label='blackbody-%sK'%self.BB_temp[0])
 		elif self.include_powlaw:
-			if self.add_FeII: plt.plot(num.e**self.wic,self.msp-self.fsl-self.ffe,label='powlaw-index=%s'%self.powlaw_index[0])
-			else: plt.plot(num.e**self.wic,self.msp-self.fsl,label='powlaw-index=%s'%self.powlaw_index[0])
+			plt.plot(num.e**self.wic,self.msp-self.fsl,label='powlaw-index=%s'%self.powlaw_index[0])
 		plt.scatter(num.e**self.wic[self.mask_int==0],self.f_int[self.mask_int==0],c='g',marker='+')
 		if self.add_FeII: plt.plot(num.e**self.wic,self.ffe,'brown',label='FeII')
-
+		# ylim=plt.ylim()
+		# top=1
+		# for lname, linew in zip(['Ha','Hb', 'HeII', 'NIII','OIII','OIII'],[6563,4861,4686,4640,5007,4959]):
+		# 	plt.plot([linew,linew],ylim,linestyle='--',alpha=0.8) 
+		# 	plt.text(linew-50,60-top*10,lname,fontsize=10) 
+		# 	top=abs(top-1)
+		# plt.plot([4686,4686],[-3,29], linestyle='--',alpha=0.7)
+		# plt.text(4640, 4, 'HeII',fontsize=20)
+		# plt.ylim([-3,29])
+		
 		plt.xlabel('Restframe wavelength',fontsize=20)
 		plt.ylabel('Flux ',fontsize=20)
 		plt.legend(fontsize=20)
@@ -451,3 +486,82 @@ class twfit():
 		if polycorr:
 			self.poly_correct(deg=polycorr_deg) # poly correct to improve the fitting results
 		self.save_results(save_fmt=save_fmt) # save the results
+	
+
+	def fit_BB(self):
+		h=6.62607015e-34; c=299792458.0
+		k=1.380649e-23 # International system of units 
+	#	print('Hello')
+		def residuals0(p,fjac=None, xval=num.e**self.wave[self.mask==1]*1e-10, yval=self.flux[self.mask==1], errval=(self.ivar[self.mask==1])**-0.5):
+			bb_lam= 2*h/xval**5 * 1/( num.e**(h*c/xval/k/p[1]) -1 )
+			bb_lam= num.array( bb_lam*1000 )*p[0] # 
+	#		print(bb_lam)
+			bb_lam=apply(calzetti00(xval*1e10,3.1*p[2],3.1),bb_lam) 
+			return [0,(yval - bb_lam)/errval]
+
+		par=[{'value':1   ,'limited':[1,0],'limits':[0,0],'parname':'scale'},
+			 {'value':80000,'limited':[1,1],'limits':[5000,1e5],'parname':'Temperature'}, 
+			 {'value':0.01, 'limited':[1,0],'limits':[0.0, 0.5], 'parname':'HostEbv'}] 
+
+
+		res=mpfit.mpfit(residuals0, parinfo=par,quiet=False)
+		print(res.errmsg)
+
+		p=res.params
+		xval=num.arange(num.e**self.wave[0],num.e**self.wave[-1],0.1)*1e-10
+		bb_lam= 2*h/xval**5 * 1/( num.e**(h*c/xval/k/p[1]) -1 )
+		bb_lam= num.array( bb_lam*1000 )*p[0]
+		bb_lam=apply(calzetti00(xval*1e10,3.1*p[2],3.1),bb_lam) 
+
+		yfit =2*h/(num.e**self.wave*1e-10)**5 * 1/( num.e**(h*c/(num.e**self.wave*1e-10)/k/p[1]) -1 )
+		yfit =num.array( yfit*1000)*p[0]
+		yfit =apply(calzetti00(num.e**self.wave ,3.1*p[2],3.1),yfit) 
+
+		print(p)
+		plt.plot(num.e**self.wave,self.flux)
+		plt.plot(xval*1e10,bb_lam)
+		plt.scatter(num.e**self.wave[self.mask==0],self.flux[self.mask==0],c='g',marker='+')
+		plt.show()
+		return num.e**self.wave, self.flux, yfit, self.ivar**-0.5, p
+
+	def fit_pow(self,deg=4,poly_corr=False):
+		def residuals0(p,fjac=None, xval=num.e**self.wave[self.mask==1], yval=self.flux[self.mask==1], errval=(self.ivar[self.mask==1])**-0.5):
+			yf= p[0]* (xval/1000)**-p[1]
+			yf=apply(calzetti00(xval,3.1*p[2],3.1),yf) 
+			return [0,(yval - yf)/errval]
+
+		par=[{'value':1   ,'limited':[1,0],'limits':[0,0],'parname':'scale'},
+			 {'value':4,'limited':[1,0],'limits':[0,0],'parname':'index'},
+			 {'value':0.01,'limited':[1,1],'limits':[0,0.5],'parname':'HostEbv'}] 
+		
+		# plt.plot(num.e**self.wave[self.mask==1], self.ivar[self.mask==1]**-0.5);plt.show() 
+		res=mpfit.mpfit(residuals0, parinfo=par,quiet=False)
+		p=res.params 
+		# print(self.wave[0], self.wave[-1])
+		xval=num.arange(num.e**self.wave[0],num.e**self.wave[-1],0.1)
+		yf= p[0]* (xval/1000)**-p[1] 
+		yf=apply(calzetti00(xval,3.1*p[2],3.1),yf)
+
+		yfit=p[0]* (num.e**self.wave/1000)**-p[1]
+		yfit=apply(calzetti00(num.e**self.wave,3.1*p[2],3.1),yfit)
+
+		####poly-correct  
+		if poly_corr:
+			ras=num.polyfit(num.e**self.wave[self.mask==1],self.flux[self.mask==1]/yfit[self.mask==1]-1,deg,w=1/(self.ivar[self.mask==1])**-0.5 )
+			f_correct=(1+num.polyval(ras,num.e**self.wave))
+			plt.plot(num.e**self.wave[self.mask==1],self.flux[self.mask==1]/yfit[self.mask==1]-1)
+			plt.plot(num.e**self.wave, f_correct-1)
+			plt.show() 
+			yfit=yfit*f_correct
+			f_correct1=(1+num.polyval(ras,xval))
+			yf=f_correct1*yf
+
+		plt.plot(num.e**self.wave,self.flux)
+		plt.plot(xval,yf)
+		plt.scatter(num.e**self.wave[self.mask==0],self.flux[self.mask==0],c='g',marker='+')
+		plt.show()
+		return num.e**self.wave,self.flux, yfit, self.ivar**-0.5, p
+
+
+	
+	
