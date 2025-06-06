@@ -10,23 +10,43 @@ from scipy.interpolate import interp1d
 from scipy.optimize import nnls
 import math 
 import matplotlib.pyplot as plt 
-from library import create_fits,MonteC,set_axis
+from create_fits import create_fits 
+# from library import create_fits,set_axis
 from spectres import spectres 
-from library import findpeak
-import os 
-import mpfit as mpfit
+from pathlib import Path as PathClass 
+current_path=PathClass(__file__).parent
+
+def set_axis(ax,labelsize=None,linewidth=None,direction=None,major_length=None,major_width=None,minor_length=None,minor_width=None):
+	if not  labelsize==None:
+		ax.tick_params(labelsize=labelsize)
+	if not  direction==None:
+		ax.tick_params(which='both',direction=direction)
+	if not major_length==None: 
+		ax.tick_params(which='major',length=major_length)
+	if not major_width==None:
+		ax.tick_params(which='major',width=major_width) 
+	if not minor_length==None:
+		ax.tick_params(which='minor',length=minor_length) 
+	if not minor_width==None: 
+		ax.tick_params(which='minor',width=minor_width) 
+	
+	if not linewidth==None:
+		ax.spines['bottom'].set_linewidth(linewidth)
+		ax.spines['left'].set_linewidth(linewidth)
+		ax.spines['right'].set_linewidth(linewidth)
+		ax.spines['top'].set_linewidth(linewidth)
 
 
-
-PATH_IC=r"C:\Users\32924\Desktop\twfit\17_ic.fit" # the path to the templates, change to your own path before running the procedure 
+PATH_IC=current_path/ "17_ic.fit" # the path to the templates, change to your own path before running the procedure 
+print('PATH_IC',PATH_IC)
 #NOTE NOTE maybe we can make iteration available, and we fit first and mask points deviated 3 sigma and then fit again.
 #NOTE the default Rv for calzetti extinction law?
-#NOTE 拟合是否需要考虑vaccum波长和air波长的转换？ 
+#NOTE the switch between the wavelengt in vaccum and air? 
 #NOTE 目前nnls求解的时候，没有把误差作为权重？ 是没有的，
 #     首先可以验证下，给nnls(A,b)是Solve argmin_x || Ax - b ||_2 for x>=0.， 那么是否可以通过 nnls(A*1/err,b*1/err)把误差给加进去？
 #     我们或许可以考虑一个折中的方法，即，nnls计算出最优解后，然后自己计算相应参数下的chi2,从而判断ired, sigma等最优参数
 #     更好的或许还是用mpfit来拟合？先用nnls得到一个初始解
-#NOTE 是否可以给红移或波长加个shift? 
+#NOTE add a variable shift for redshift or wavelength
 #TODO add a sentence to check if the input is ivar? sometimes maybe an error was inputed 
 def sdssfit(path_sdss,starlight=None,
 					  and_mask=True,extra_mask=None,line_mask=True,bw=1200/3e5,
@@ -133,14 +153,21 @@ def spec_fit(wave,flux,ivar,starlight=None,mw_ebv=None,mw_ext=True,ra_dec=None,r
 	#ra_dec=(ra,dec), in unit 'deg'
 	if (mw_ebv is None ) & (ra_dec is None) & mw_ext: 
 		raise Exception('Must give one of the mw_ebv or ra_dec to do the Galactic extinction ')
+	
+	##remove bad points
+	ind= num.isnan(ivar) | num.isnan(flux) | num.isinf(ivar) | num.isinf(flux)
+	wave, flux, ivar=wave[ind==False],flux[ind==False],ivar[ind==False] 
+	##correct mw extinction
 	if mw_ext:
 		if mw_ebv is None: mw_ebv= ebv_value(ra_dec,unit='degree')
 		fcorr=remove(fitzpatrick99(wave,3.1*mw_ebv), num.ones_like(flux))
 		flux=flux*fcorr
 		ivar=ivar/fcorr**2 
-	
+
+	##correct redshift
 	wave=wave/(1+redshift);flux=flux*(1+redshift); ivar=ivar/(1+redshift)**2 #NOTE ferr redshift? 
-	
+
+
 	if log_rebin:
 		wave_log=num.linspace(num.log(wave[1]),num.log(wave[len(wave)-2]),num=len(wave))
 		flux_log,err_log=spectres(num.e**wave_log,wave,flux,spec_errs=ivar**-0.5)
@@ -238,7 +265,7 @@ class twfit():
 
 		#add FeII,
 		if add_FeII:
-			hdu=fits.open(r"C:\Users\32924\Downloads\newfe2.fits")
+			hdu=fits.open(current_path / "newfe2.fits")
 			wFe=10**hdu[1].data['wave'][0]
 			nfe=hdu[1].data['nfe'][0] 
 			bfe=hdu[1].data['bfe'][0]
